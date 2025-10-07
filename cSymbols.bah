@@ -1,0 +1,387 @@
+#import "rope.bah"
+#import "string.bah"
+
+outFile rope*
+shouldOutpoutC = true
+
+const cTypePrim   = 0
+const cTypeStruct = 1
+const cTypeFunc   = 2
+const cTypeEnum   = 3
+const cTypePtr    = 4
+const cTypeArray  = 5
+const cTypeDef    = 6
+
+bahSafeName(name str) str {
+    if name == "function" {
+        return "Function"
+    }
+
+    if name == "map" {
+        return "Map"
+    }
+
+    if name == "buffer" {
+        return "Buffer"
+    }
+
+    return name
+}
+
+struct cLoc {
+    file: str = "?"
+    line: uint
+
+    toStr() str {
+        return this.file+":"+uintToStr(this.line)
+    }
+}
+
+struct cType {
+    name: str
+
+    isLong: bool
+    isShort: bool
+    isUnsigned: bool
+    length: uint
+    isDeclared: bool = true
+
+    child: cType*
+    next:  cType*
+    ret:   cType*
+
+    type: byte
+
+    loc: cLoc
+
+    getPtr() cType* {
+        return new cType {
+            type: cTypePtr
+            child: this
+        }
+    }
+
+    getSize() uint {
+        for this.type == cTypeDef {
+            this = this.child
+        }
+
+        if this.type == cTypePtr || this.type == cTypeFunc {
+            return 8
+        }
+
+        if this.type == cTypeEnum {
+            return 4
+        }
+
+        if this.type == cTypePrim {
+            if this.name == "char" || this.name == "bool" {
+                return 1
+            }
+
+            if this.name == "float" {
+                return 4
+            }
+
+            if this.name == "double" {
+                return 8
+            }
+
+            if this.name == "int" {
+                if this.isLong {
+                    return 8
+                }
+
+                if this.isShort {
+                    return 2
+                }
+
+                return 4
+            }
+        }
+
+        if this.type == cTypeStruct {
+            offset = 0
+
+            currTp = this.child.next
+            for currTp != null, currTp = currTp.next {
+                size = currTp.child.getSize()
+                if offset % size != 0 {
+                    offset += size - (offset % size)
+                }
+
+                offset += size
+            }
+
+            return offset
+        }
+
+        if this.type == cTypeArray {
+            return this.length * this.child.getSize()
+        }
+
+        return 0
+    }
+
+    toStr() str {
+        for this.type == cTypeDef {
+            this = this.child
+        }
+
+        if this.type == cTypePtr {
+            if this.child.type == cTypePrim && this.child.name == "void" || this.child.type == cTypeArray {
+                return "ptr"
+            }
+            return this.child.toStr() + "*"
+        }
+
+        if this.type == cTypeEnum || this.type == cTypeStruct {
+            return this.name
+        }
+
+        if this.type == cTypeArray {
+            return "buffer:"+uintToStr(this.length * this.child.getSize())
+        }
+
+        if this.type == cTypeFunc {
+            r = "function("
+            currTp = this.next
+            for currTp != null, currTp = currTp.next {
+                if currTp.child.type == cTypePrim && currTp.child.name == "void" {
+                    break
+                }
+                r += currTp.child.toStr()
+                if currTp.next != null {
+                    r += ", "
+                }
+            }
+
+            r += ")"
+
+            if this.ret != null && (this.ret.type != cTypePrim || this.ret.name != "void") {
+                r += " " + this.ret.toStr()
+            }
+
+            return r
+        }
+
+        if this.type == cTypePrim {
+            if this.name == "int" {
+                if this.isUnsigned {
+
+                    if this.isLong {
+                        return "uint"
+                    }
+
+                    if this.isShort {
+                        return "uint16"
+                    }
+
+                    return "uint32"
+                }
+                
+                if this.isLong {
+                    return "int"
+                }
+
+                if this.isShort {
+                    return "int16"
+                }
+
+                return "int32"
+            }
+
+            if this.name == "char" {
+                if this.isUnsigned {
+                    return "byte"
+                }
+
+                return "char"
+            }
+
+            if this.name == "void" {
+                return ""
+            }
+
+            if this.name == "bool" {
+                return "bool"
+            }
+
+            if this.name == "float" {
+                return "float32"
+            }
+
+            if this.name == "double" {
+                return "float"
+            }
+        }
+
+        return ""
+    }
+
+    funcDeclToStr() str {
+        r = "("
+        currTp = this.next
+        i=0
+        for currTp != null, currTp = currTp.next {
+            if currTp.child.type == cTypePrim && currTp.child.name == "void" {
+                break
+            }
+
+            if len(currTp.name) == 0 {
+                currTp.name = "arg_"+uintToStr(i+1)
+            }
+
+            r += bahSafeName(currTp.name) + " " + currTp.child.toStr()
+            if currTp.next != null {
+                r += ", "
+            }
+            i++
+        }
+
+        r += ")"
+
+        if this.ret.type != cTypePrim || this.ret.name != "void" {
+            r += " " + this.ret.toStr()
+        }
+
+        return r
+    }
+}
+
+struct cFunc {
+    name: str
+    type: cType*
+
+    loc: cLoc
+}
+
+struct cVar {
+    name: str
+    type: cType*
+    value: str //will do later
+
+    loc: cLoc
+}
+
+struct cEnumLabel {
+    name: str
+    val:  str
+}
+
+struct cEnum {
+    name: str
+    type: cType*
+    labels: []cEnumLabel
+
+    loc: cLoc
+}
+
+struct cSymbols {
+    types: []cType*
+    funcs: []cFunc*
+    vars: []cVar*
+    enums: []cEnum*
+
+    findStruct(name str) cType* {
+        i=0; for i < len(this.types), i++ {
+            if this.types[i].type == cTypeStruct && this.types[i].name == name {
+                return this.types[i]
+            }
+
+            if this.types[i].type == cTypeDef && this.types[i].name == name {
+                return this.types[i].child
+            }
+        }
+
+        return null
+    }
+
+    addEnum(e cEnum*) {
+        this.enums[len(this.enums)] = e
+
+        if shouldOutpoutC == false {
+            return
+        }
+
+        if e.name != "enum" {
+            outFile += rope("//Enum: "+e.name+"\n//Location: "+e.loc.toStr()+"\n")
+            outFile += rope("#define "+e.name+" uint32\n")
+            i=0; for i < len(e.labels), i++ {
+                outFile += rope("const "+e.labels[i].name+" = <"+e.name+"> "+e.labels[i].val+"\n")
+            }
+        } else {
+            i=0; for i < len(e.labels), i++ {
+                outFile += rope("const "+e.labels[i].name+" = "+e.labels[i].val+"\n")
+            }
+        }
+
+
+        outFile += rope("\n")
+    }
+
+    addVar(v cVar*) {
+        this.vars[len(this.vars)] = v
+    }
+
+    addFunc(fn cFunc*) {
+        this.funcs[len(this.funcs)] = fn
+
+        if shouldOutpoutC == false {
+            return
+        }
+
+        outFile += rope("//Location: "+fn.loc.toStr()+"\n")
+        outFile += rope("#define "+fn.name+fn.type.funcDeclToStr()+"\n")
+        outFile += rope("\n")
+    }
+
+    addType(tp cType*) {
+        this.types[len(this.types)] = tp
+    }
+
+    declareType(tp cType*) {
+        if shouldOutpoutC == false {
+            return
+        }
+
+        if tp.type == cTypeStruct {
+            if tp.isDeclared == false {
+                outFile += rope("//Undeclared structure: "+tp.name+"\n//Location: "+tp.loc.toStr()+"\n")
+                outFile += rope("#define "+tp.name+" ptr\n\n")
+                return
+            }
+            outFile += rope("//Location: "+tp.loc.toStr()+"\n")
+            outFile += rope("struct "+tp.name+" {\n")
+            currTp = tp.child.next
+            for currTp != null, currTp = currTp.next {
+                name = bahSafeName(currTp.name)
+                outFile += rope("\t"+name+": "+currTp.child.toStr()+"\n")
+            }
+            outFile += rope("}\n\n")
+        } else if tp.type == cTypeDef && tp.child.type == cTypeStruct {
+            stp = tp.child
+            if stp.isDeclared == false {
+                outFile += rope("//Undeclared structure: "+stp.name+"\n")
+                outFile += rope("#define "+stp.name+" ptr\n\n")
+                return
+            }
+            outFile += rope("//Location: "+tp.loc.toStr()+"\n")
+            outFile += rope("struct "+tp.name+" {\n")
+            currTp = stp.child.next
+            for currTp != null, currTp = currTp.next {
+                name = bahSafeName(currTp.name)
+                outFile += rope("\t"+name+": "+currTp.child.toStr()+"\n")
+            }
+            outFile += rope("}\n\n")
+        }
+    }
+}
+
+cPrimitiveTypes = []str {
+    "void", "bool",
+    "char", "int",
+    "float", "double"
+}
+
+symbols cSymbols

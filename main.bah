@@ -1,0 +1,100 @@
+#import "iostream.bah"
+#import "string.bah"
+#import "flags.bah"
+#import "json.bah"
+#import "rope.bah"
+#import "exec.bah"
+
+#import "compiler/lexer.bah"
+
+#import "cParser.bah"
+
+main(args []str) int {
+    symbols = cSymbols{}
+    outFile = rope("// Bindings automatically generated\n// using https://github.com/ithirzty/ctobah\n\n")
+
+    flags = flags{}
+    flags.addString("o", "Outpout file name.")
+    flags.addString("l", "Library's name without l/lib at the start.")
+    flags.addBool("w", "Only print warnings.")
+    flags.parse(args)
+
+    onlyWarnings = flags.isSet("w")
+
+    if len(args) < 2 {
+        println("Usage: "+args[0]+" path/to/c_header.h <flags>")
+        return 1
+    }
+
+    if flags.isSet("l") {
+        libsName = flags.get("l")
+        cmd = command("pkg-config --libs "+libsName)
+        res = cmd.runBytes()
+
+        if cmd.status != 0 {
+            println(warningMessage+"Could not find libraries '"+libsName+"' with pkg-config.")
+            outFile += rope("#cLib \""+flags.get("l")+"\"\n\n")
+        } else {
+            outFile += rope("#cLib")
+
+            i=0; for i < len(res), i++ {
+                start = i+1
+                i++
+                for i < len(res), i++ {
+                    if res[i] == ' ' || res[i] == <byte>10 {
+                        break
+                    }
+                }
+
+                if i - start <= 1 {
+                    continue
+                }
+
+                outFile += rope(" \""+arrToStr(res[start:i])+"\"")
+
+            }
+
+            outFile += rope("\n\n")
+        }
+
+    }
+
+    file = args[flags.unused()]
+
+    outFile += rope("// Original file: "+absPath(file)+"\n")
+
+    baseDir = ""
+
+    i=len(file)-1; for i != 0, i-- {
+        if file[i] == '/' {
+            break
+        }
+    }
+
+    baseDir = file[:i]
+    outFile += rope("// Bindings of exclusively: "+absPath(baseDir)+"\n\n")
+
+    outName = file[:len(file)-2]+".bah"
+    if flags.isSet("o") {
+        outName = flags.get("o")
+        if strHasSuffix(outName, ".bah") == false {
+            outName += ".bah"
+        }
+    }
+
+
+    cmd = command("cc -E "+file)
+    out = arrToStr(cmd.runBytes())
+
+    tokens = lexer(out, true)
+    
+    parseCFile(tokens, baseDir)
+    
+    fs = fileStream{}
+    fs.open(outName, "w")
+    fs.writeFile(outFile.toStr())
+    fs.close()
+
+
+    return 0
+}
