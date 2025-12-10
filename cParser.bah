@@ -69,24 +69,28 @@ collapseCvalue(tokens []cToken, start uint) [int, uint] {
             calcStr += rope(tokens[i].cont)
         }
 
-        if onlyWarnings == false {
-            print(infoMessage+"Calculating: \033[35m"+calcStr.toStr()+"\033[0m using JIT compiler (at: "+tokens[i].getPos()+") -> ")
+        fcalcStr = calcStr.toStr()
+
+        if len(fcalcStr) != 0 {
+            if onlyWarnings == false {
+                print(infoMessage+"Calculating: \033[35m"+fcalcStr+"\033[0m using JIT compiler (at: "+tokens[i].getPos()+") -> ")
+            }
+            startTime = getTimeUnix()
+
+            jitObj = jitCompileNoBuiltin("calc() int {
+                return "+fcalcStr+"
+            }")
+
+            calcFn = <function()uint>jitObj.getSymbol("calc")
+            
+            nb = calcFn()
+
+            if onlyWarnings == false {
+                println("\033[35m"+intToStr(nb)+"\033[0m (took "+uintToStr((getTimeUnix() - startTime) / 1000000)+"ms)")
+            }
+
+            return [nb, i]
         }
-        startTime = getTimeUnix()
-
-        jitObj = jitCompileNoBuiltin("calc() int {
-            return "+calcStr.toStr()+"
-        }")
-
-        calcFn = <function()uint>jitObj.getSymbol("calc")
-        
-        nb = calcFn()
-
-        if onlyWarnings == false {
-            println("\033[35m"+intToStr(nb)+"\033[0m (took "+uintToStr((getTimeUnix() - startTime) / 1000000)+"ms)")
-        }
-
-        return [nb, i]
     }
     return [strToInt(tokens[start].cont), start+1]
 }
@@ -584,7 +588,7 @@ parseCFile(bahTokens []bahToken, baseDir str) {
                     break
                 }
             }
-            if i != len(bahTokens) && bahTokens[i].cont != "#" && start+2 < len(bahTokens) && bahTokens[start+1].type == TOKEN_TYPE_INT {
+            if i != len(bahTokens) && start+2 < len(bahTokens) && bahTokens[start+1].type == TOKEN_TYPE_INT {
                 currPosOffset = bahTokens[start+1].line + 1
                 currCPos[0] = strToInt(bahTokens[start+1].cont)
                 currCPos[1] = bahTokens[start+2].cont[1:len(bahTokens[start+2].cont)-1]
@@ -655,4 +659,10 @@ parseCFile(bahTokens []bahToken, baseDir str) {
     }
 
     println("\n\033[1;32mDone!\033[0m")
+    if onlyWarnings == false {
+        println(intToStr(len(symbols.types))+" types.")
+        println(intToStr(len(symbols.funcs))+" functions.")
+        println(intToStr(len(symbols.vars))+" variables.")
+        println(intToStr(len(symbols.enums))+" enums.")
+    }
 }
